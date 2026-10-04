@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>駐車場①シミュレーション</title>
+<style>
+:root{--bg:#f3f4f1;--fg:#1d2326;--mut:#667;--road:#d5d9d4;--empty:#fff;--occ:#d9822b;--rsv:#2f7fb8;--line:#aab;
+box-sizing:border-box;padding:env(safe-area-inset-top,0px) 12px env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171b1d;--fg:#e8ebe9;--mut:#9aa;--road:#2a3236;--empty:#1f2528;--line:#46535a}}
+:root[data-theme="dark"]{--bg:#171b1d;--fg:#e8ebe9;--mut:#9aa;--road:#2a3236;--empty:#1f2528;--line:#46535a}
+html,body{margin:0}body{background:var(--bg);color:var(--fg);font:15px/1.5 "Hiragino Sans","Noto Sans JP",system-ui,sans-serif;max-width:1000px;margin:0 auto;padding:12px 0}
+h1{font-size:20px;margin:4px 0 10px}
+canvas{width:100%;background:var(--road);border-radius:6px;display:block}
+.ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 18px;margin:12px 0}
+label{display:flex;flex-direction:column;font-size:13px;color:var(--mut)}label b{color:var(--fg);font-weight:600}
+input[type=range]{width:100%}
+button{font:inherit;padding:6px 14px;margin-right:8px;border:1px solid var(--line);background:var(--empty);color:var(--fg);border-radius:6px;cursor:pointer}
+.st{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}
+.st div{border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--mut)}.st b{display:block;font-size:20px;color:var(--fg)}
+</style></head><body>
+<h1>駐車場①シミュレーション(80台)</h1>
+<canvas id="c" width="960" height="290"></canvas>
+<div class="ctl">
+<label>到着間隔(平均 <b id="vA">3</b>分)<input id="A" type="range" min="60" max="600" step="30" value="180"></label>
+<label>分岐の誘導時間 <b id="vJ">4</b>秒/台<input id="J" type="range" min="1" max="60" value="4"></label>
+<label>駐車場内の誘導時間(2名)<b id="vG" >10</b>秒/台<input id="G" type="range" min="3" max="90" value="10"></label>
+<label>退場1台の通過間隔 <b id="vE">12</b>秒<input id="E" type="range" min="4" max="90" value="12"></label>
+<label>退場間隔(平均滞在時間) <b id="vS">30</b>分<input id="S" type="range" min="10" max="120" step="5" value="30"></label>
+<label>再生速度 ×<b id="vX">300</b><input id="X" type="range" min="1" max="1200" value="300"></label>
+</div>
+<button id="run">一時停止</button><button id="rst">リセット</button>
+<div class="st">
+<div>経過時間<b id="tT">0:00</b></div><div>駐車台数<b id="n1">0/80</b></div><div>分岐の待ち台数<b id="q">0</b></div>
+<div>最大待ち台数<b id="qm">0</b></div><div>平均待ち時間<b id="w">0秒</b></div><div>満車で入れなかった台数<b id="lost">0</b></div>
+<div>退場待ち(北2列/南2列)<b id="xq">0 / 0</b></div><div>最大退場待ち台数<b id="xm">0</b></div><div>平均退場待ち時間<b id="xw">0秒</b></div>
+</div>
+<p style="font-size:12px;color:var(--mut)">橙=駐車中 青=誘導中 赤=退場待ち・退場中。北側2列の退場車は東へ出て南側の誘導路を西へ、南側2列の退場車は北側の誘導路を通って東へ出る動線で、それぞれ1台ずつ通過する前提です。</p>
+<script>
+const $=id=>document.getElementById(id),cv=$('c'),g=cv.getContext('2d');
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const v={};['A','J','G','E','S','X'].forEach(k=>{const f=()=>{v[k]=+$(k).value;$('v'+k).textContent=k==='A'?+(v[k]/60).toFixed(1):v[k]};$(k).oninput=f;f()});
+const CW=40,X0=80,YS=[48,108,138,198],CH=28;
+let s;
+function mk(){const o=[];for(let r=0;r<4;r++)for(let c=19;c>=0;c--)o.push({r,c,v:0,rd:0});
+ s={t:0,nx:0,jq:[],j:null,o,lq:[],sv:[],xq:[[],[]],xs:[null,null],wsum:0,wn:0,qm:0,lost:0,xw:0,xn:0,xm:0}}
+const rnd=m=>-Math.log(1-Math.random())*m;
+const free=()=>s.o.filter(x=>x.v===0).length-s.lq.length;
+function step(dt){
+ s.t+=dt;
+ while(s.nx<=s.t){s.jq.push(s.nx);s.nx+=rnd(v.A)}
+ if(!s.j&&s.jq.length){const a=s.jq.shift();s.wsum+=s.t-a;s.wn++;s.j=s.t+v.J}
+ if(s.j&&s.t>=s.j){s.j=null;if(free()<=0)s.lost++;else s.lq.push(1)}
+ s.sv=s.sv.filter(x=>{if(s.t>=x.e){x.sl.v=s.t+rnd(v.S*60)+30;return false}return true});
+ while(s.sv.length<2&&s.lq.length){const sl=s.o.find(x=>x.v===0);if(!sl)break;s.lq.shift();sl.v=-1;s.sv.push({e:s.t+v.G,sl})}
+ s.o.forEach(x=>{if(x.v>0&&s.t>=x.v){x.v=-2;x.rd=s.t;s.xq[x.r<=1?0:1].push(x)}});
+ for(let c=0;c<2;c++){
+  if(s.xs[c]&&s.t>=s.xs[c].e){s.xs[c].sl.v=0;s.xs[c]=null}
+  if(!s.xs[c]&&s.xq[c].length){const sl=s.xq[c].shift();s.xw+=s.t-sl.rd;s.xn++;s.xs[c]={e:s.t+v.E,sl}}}
+ s.qm=Math.max(s.qm,s.jq.length+(s.j?1:0));
+ s.xm=Math.max(s.xm,s.xq[0].length+s.xq[1].length);
+}
+function draw(){
+ g.clearRect(0,0,960,290);g.font='13px sans-serif';g.fillStyle=css('--fg');
+ ['北','','','南'].forEach((t,i)=>t&&g.fillText(t+'列',20,YS[i]+19));
+ g.fillText('東',925,20);g.fillText('西',X0,20);
+ g.fillText('北側の誘導路',X0+330,98);g.fillText('南側の誘導路',X0+330,188);
+ s.o.forEach(x=>{g.fillStyle=x.v===0?css('--empty'):x.v===-1?css('--rsv'):x.v===-2?'#c0392b':css('--occ');
+  g.fillRect(X0+x.c*CW+2,YS[x.r],CW-4,CH)});
+ g.fillStyle=css('--fg');g.fillText('入口(誘導員①)待ち '+s.jq.length+'台',X0,270);
+ $('tT').textContent=Math.floor(s.t/3600)+':'+String(Math.floor(s.t/60)%60).padStart(2,'0');
+ $('n1').textContent=s.o.filter(x=>x.v!==0).length+'/80';
+ $('q').textContent=s.jq.length;$('qm').textContent=s.qm;
+ $('w').textContent=(s.wn?Math.round(s.wsum/s.wn):0)+'秒';$('lost').textContent=s.lost;
+ $('xq').textContent=s.xq[0].length+' / '+s.xq[1].length;$('xm').textContent=s.xm;
+ $('xw').textContent=(s.xn?Math.round(s.xw/s.xn):0)+'秒';
+}
+let run=true,last=performance.now();
+$('run').onclick=()=>{run=!run;$('run').textContent=run?'一時停止':'再開'};
+$('rst').onclick=()=>mk();
+function loop(n){const d=Math.min((n-last)/1000,0.1);last=n;
+ if(run){let rem=d*v.X;while(rem>0){const h=Math.min(rem,1);step(h);rem-=h}}
+ draw();requestAnimationFrame(loop)}
+mk();requestAnimationFrame(loop);
+</script></body></html>
